@@ -2,6 +2,14 @@ from tqdm import tqdm
 from IPython.display import clear_output
 from geopy.geocoders import Nominatim
 from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+import googlemaps
+import pandas as pd
+import json
+import os 
+
+load_dotenv()  # take environment variables from .env.
+gmaps = googlemaps.Client(key=os.getenv('GOOGLEMAPS_API_KEY'))
 
 geolocator = Nominatim(user_agent="python")
 
@@ -15,7 +23,7 @@ def get_address(location):
 def get_address_wrapper(location):
     return (location, get_address(location))
 
-def process_locations(df, num_threads=3):
+def process_locations_osm(df, num_threads=3):
     to_map = df['user_location'].unique().tolist()
 
     errors_count = 0
@@ -39,3 +47,34 @@ def process_locations(df, num_threads=3):
     print(f"\nFinal Success Rate: {final_success_rate}%")
     
     return result_dict, errors_loc_list
+
+def geocode_location(location, gmaps):
+    try:
+        geocode_result = gmaps.geocode(location)
+        if geocode_result:
+            return location, geocode_result[0]
+        else:
+            return location, None
+    except Exception as e:
+        print(f"An error occurred while geocoding '{location}': {e}")
+        return location, 'Error'
+
+def process_locations_gmaps(df, api_key=None, max_workers=10):
+    if api_key is None:
+        api_key = os.getenv('GOOGLEMAPS_API_KEY')
+    
+    gmaps = googlemaps.Client(key=api_key)
+    locations_unique = df['user_location'].unique().tolist()
+
+    geocoded_results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = list(tqdm(executor.map(geocode_location, locations_unique, [gmaps] * len(locations_unique)), total=len(locations_unique)))
+    
+    for location, formatted_address in results:
+        geocoded_results[location] = formatted_address
+
+    # Convert the geocoded_errors dictionary to a JSON object
+    json_output = json.dumps(geocoded_results, ensure_ascii=False)
+
+    return json_output
+
